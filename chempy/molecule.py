@@ -97,7 +97,7 @@ def parse_molecule(formula: str):
         elif tok == '(':
             while op_stack[-1] != ')':
                 eval_op()
-            op_stack.pop()
+            op_stack.pop()  # pop matching ')'
             eval_op()
         elif tok in valid_elements:
             reserve.append([tok])

@@ -13,8 +13,13 @@ from chempy.util import tokenize
 
 def _parse_coeff(coeff: str = ''):
     if not coeff:
-        frac = Fraction(1)
-    elif coeff.isnumeric():
+        return Fraction(1)
+
+    coeff = ''.join(coeff.split())
+    if coeff[0] == '-':
+        raise ValueError('Coefficient cannot be negative')
+
+    if coeff.isnumeric():
         frac = Fraction(int(coeff))
     elif '.' in coeff:
         ratio = float(coeff).as_integer_ratio()
@@ -37,7 +42,7 @@ class Species:
             else Fraction(num, denom) if isinstance(coeff, float) \
             else Fraction(coeff)
         self._molecule = molecule
-        self._atoms = self._molecule.elements.copy()
+        self._atoms = self._molecule.elements
         for key in self._atoms.keys():
             self._atoms[key] *= self._coeff
 

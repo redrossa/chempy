@@ -11,16 +11,16 @@ from chempy.molecule import Molecule
 from chempy.util import tokenize
 
 
-def _parse_coeff(src: str = ''):
-    if not src:
+def _parse_coeff(coeff: str = ''):
+    if not coeff:
         frac = Fraction(1)
-    elif src.isnumeric():
-        frac = Fraction(int(src))
-    elif '.' in src:
-        ratio = float(src).as_integer_ratio()
+    elif coeff.isnumeric():
+        frac = Fraction(int(coeff))
+    elif '.' in coeff:
+        ratio = float(coeff).as_integer_ratio()
         frac = Fraction(ratio[0], ratio[1])
-    elif '/' in src:
-        ratio = src.split('/')
+    elif '/' in coeff:
+        ratio = coeff.split('/')
         if len(ratio) != 2:
             raise ValueError('Invalid coefficient numerical value')
         frac = Fraction(int(ratio[0]), int(ratio[1]))

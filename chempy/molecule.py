@@ -82,12 +82,12 @@ class Molecule:
         else:
             charge = 0
             try:
-                states_start = toks.index('(')
+                states_start = len(toks) - toks[-1::-1].index('(') - 1
             except ValueError:
                 states_start = 0  # states cannot be first character
 
         # states must take up the rest of the list
-        states = toks[states_start + 1:len(toks) - 1] if states_start else None
+        states = [state for state in toks[states_start + 1:len(toks) - 1] if state != ','] if states_start else None
         formula_toks = toks[:charge_start] if charge_start else toks[:states_start] if states_start else toks
 
         return Molecule(formula_toks, charge, states)

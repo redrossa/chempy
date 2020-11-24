@@ -45,11 +45,11 @@ class MoleculeParseTests(unittest.TestCase):
         ]
 
         for actual, expected in cases:
-            self.assertEqual(expected, actual)
+            self.assertEqual(actual, expected)
 
 
 class MoleculeTests(unittest.TestCase):
-    def test_Molecule_init(self):
+    def test_init(self):
         cases = [(Molecule(util.tokenize(formula), adjust_charge(charge), states),
                   formula,
                   Counter(molecule._parse(util.tokenize(formula))),
@@ -58,12 +58,12 @@ class MoleculeTests(unittest.TestCase):
                  for formula, charge, states in case_inputs]
 
         for actual, exp_formula, exp_elements, exp_charge, exp_states in cases:
-            self.assertEqual(exp_formula, actual.formula)
-            self.assertEqual(exp_elements, actual.elements)
-            self.assertEqual(exp_charge, actual.charge)
-            self.assertEqual(exp_states, actual.states)
+            self.assertEqual(actual.formula, exp_formula)
+            self.assertEqual(actual.elements, exp_elements)
+            self.assertEqual(actual.charge, exp_charge)
+            self.assertEqual(actual.states, exp_states)
 
-    def test_Molecule_complete_formula(self):
+    def test_complete_formula(self):
         cases = [(Molecule.complete_formula(molecule_as_str(formula, charge, states)),
                   formula,
                   Counter(molecule._parse(util.tokenize(formula))),
@@ -72,10 +72,10 @@ class MoleculeTests(unittest.TestCase):
                  for formula, charge, states in case_inputs]
 
         for actual, exp_formula, exp_elements, exp_charge, exp_states in cases:
-            self.assertEqual(exp_formula, actual.formula)
-            self.assertEqual(exp_elements, actual.elements)
-            self.assertEqual(exp_charge, actual.charge)
-            self.assertEqual(exp_states, actual.states)
+            self.assertEqual(actual.formula, exp_formula)
+            self.assertEqual(actual.elements, exp_elements)
+            self.assertEqual(actual.charge, exp_charge)
+            self.assertEqual(actual.states, exp_states)
 
 
 if __name__ == '__main__':

@@ -1,76 +1,13 @@
-import collections
-from typing import List, Dict, NamedTuple
+from collections import Counter
+from typing import Union, List
 
-valid_elements = [
-    "H", "He",
-    "Li", "Be", "B", "C", "N", "O", "F", "Ne",
-    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar",
-    "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr",
-    "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe",
-    "Cs", "Ba",
-    "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
-    "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn",
-    "Fr", "Ra",
-    "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr",
-    "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
-]
+from chempy.util import tokenize
 
 
-class Molecule(NamedTuple):
-    formula: str
-    elements: Dict[str, float]
-    charge: str
-    phases: List[str]
-
-    def __str__(self):
-        return self.formula
-
-    def __repr__(self):
-        return self.__str__()
-
-
-def tokenize(formula: str) -> List[str]:
-    if '!' in formula:
-        raise ValueError('Invalid token in "' + formula + "' at index " + str(formula.find('!')))
-
-    tokens = []
-    store = ""
-
-    def add_tok(tok: str):
-        if tok != '':
-            tokens.append(tok)
-
-    def retrieve_store():
-        nonlocal store
-        tmp = store
-        store = ''
-        return tmp
-
-    for i, c in enumerate(formula + '!'):
-        if c == '(' or c == ')':
-            add_tok(retrieve_store())
-            add_tok(c)
-        elif c.isupper():
-            add_tok(retrieve_store())
-            store += c
-        elif c.islower():
-            add_tok(retrieve_store() + c)
-        elif c.isnumeric():
-            if not store.isnumeric():
-                add_tok(retrieve_store())
-            store += c
-        elif c == '!':
-            add_tok(retrieve_store())
-        else:
-            raise ValueError('Invalid token in "' + formula + "' at index " + str(i))
-    return tokens
-
-
-def parse_molecule(formula: str):
-    op_stack = []
-    result = []
-    reserve = []
-    tokens = tokenize(formula)
+def _parse(toks: List[str]):
+    op_stack: List[str] = []
+    result: List[str] = []
+    reserve: List[List[str]] = []
 
     def eval_op():
         if len(op_stack) == 0 or len(reserve) == 0:
@@ -83,27 +20,28 @@ def parse_molecule(formula: str):
         elif op.isnumeric():
             multiplier = int(op)
             reserve[-1] *= multiplier
-        else:
-            raise ValueError('Invalid operator "' + op + '"')
 
     def merge_res():
         nonlocal reserve
-        if len(reserve) == 2:
-            reserve = [reserve[0] + reserve[1]]
+        if len(reserve) > 1:
+            merged = []
+            for item in reserve:
+                merged += item
+            reserve = [merged]
 
-    for tok in reversed(tokens):
-        if tok.isnumeric() or tok == ')':
+    for tok in reversed(toks):
+        if tok.isnumeric() or tok == ')':  # the valid operators
             op_stack.append(tok)
         elif tok == '(':
             while op_stack[-1] != ')':
                 eval_op()
             op_stack.pop()  # pop matching ')'
             eval_op()
-        elif tok in valid_elements:
+        elif tok.isalpha():
             reserve.append([tok])
             eval_op()
         else:
-            raise ValueError('Invalid element "' + tok + '" in "' + formula + '"')
+            raise ValueError('Invalid character while parsing molecule formula: ' + tok)
 
         merge_res()
         if len(op_stack) == 0:
@@ -112,21 +50,90 @@ def parse_molecule(formula: str):
     return result
 
 
-def molecule(formula: str):
-    formula = "".join(formula.split())
+class Molecule:
+    def __init__(self, formula_toks: List[str], charge: Union[str, int] = 0, states: List = None):
+        self._formula = ''.join(formula_toks)
+        self._elements = Counter(_parse(formula_toks))
+        self._charge = int(charge)
+        self._states = states if states else []
+        self._charge_sign = '+' if self._charge >= 0 else '-'
+        self._charge_mag = abs(self._charge)
 
-    if formula[-1] != ')':
-        raise ValueError('Molecule phases not listed')
+    @staticmethod
+    def complete_formula(complete_formula: str):
+        toks: List[str] = tokenize(complete_formula)
 
-    phase_index = formula.rfind('(')
-    charge_index = formula.rfind('+')
-    if charge_index == -1:
-        charge_index = formula.rfind('-')
+        try:
+            charge_start = toks.index('+')
+        except ValueError:
+            try:
+                charge_start = toks.index('-')
+            except ValueError:
+                charge_start = 0  # charge cannot be first character
 
-    phase = formula[phase_index + 1:len(formula) - 1].split(',')
-    charge = "0" if charge_index == -1 else formula[charge_index:phase_index]
-    elements_formula = formula[0:phase_index if charge_index == -1 else charge_index]
+        if charge_start > 0:
+            # sign, number, ... OR sign, ...
+            try:
+                charge_is_one = not toks[charge_start + 1].isnumeric()
+            except IndexError:
+                charge_is_one = True
+            states_start = charge_start + (1 if charge_is_one else 2)
+            charge = ''.join(toks[charge_start:states_start] + (['1'] if charge_is_one else []))
+        else:
+            charge = 0
+            try:
+                states_start = toks.index('(')
+            except ValueError:
+                states_start = 0  # states cannot be first character
 
-    parsed_formula = parse_molecule(elements_formula)
+        # states must take up the rest of the list
+        states = toks[states_start + 1:len(toks) - 1] if states_start else None
+        formula_toks = toks[:charge_start] if charge_start else toks[:states_start] if states_start else toks
 
-    return Molecule(formula, collections.Counter(parsed_formula), charge, phase)
+        return Molecule(formula_toks, charge, states)
+
+    @property
+    def formula(self):
+        return self._formula
+
+    @property
+    def elements(self):
+        return self._elements
+
+    @property
+    def charge(self):
+        return self._charge
+
+    @property
+    def states(self):
+        return self._states.copy()
+
+    @property
+    def charge_sign(self):
+        return self._charge_sign
+
+    @property
+    def charge_mag(self):
+        return self._charge_mag
+
+    def __hash__(self):
+        return hash((self._formula, self._charge, *self._states))
+
+    def __eq__(self, other: 'Molecule'):
+        return isinstance(other, Molecule) \
+               and self._formula == other._formula \
+               and self._charge == other._charge \
+               and self._states == other._states
+
+    def __str__(self):
+        return self._formula + \
+               (self._charge_sign + (str(self._charge_mag) if self._charge_mag != 1 else '')
+                if self._charge_mag != 0 else '') + \
+               ('(' + ', '.join(state for state in self._states) + ')' if self._states else '')
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(' \
+               'formula=' + self._formula + ', ' \
+               'charge='+ self._charge_sign + str(self._charge_mag) + ', ' + \
+               'states=' + str(self._states) + \
+               ')'

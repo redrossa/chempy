@@ -1,113 +1,247 @@
-import re
-from typing import NamedTuple, List, Tuple
+import math
+from collections import Counter
+from fractions import Fraction
+from functools import reduce
+from itertools import tee, islice, zip_longest
+from typing import List, Union, Dict
 
-from sympy import eye
-from sympy import Rational
 from sympy import Matrix
-from chempy.molecule import molecule
+
 from chempy.molecule import Molecule
+from chempy.util import tokenize
 
-phases_p = re.compile(r'\((s|l|g|aq)[^)]*\)')
+
+def _parse_coeff(src: str = ''):
+    if not src:
+        frac = Fraction(1)
+    elif src.isnumeric():
+        frac = Fraction(int(src))
+    elif '.' in src:
+        ratio = float(src).as_integer_ratio()
+        frac = Fraction(ratio[0], ratio[1])
+    elif '/' in src:
+        ratio = src.split('/')
+        if len(ratio) != 2:
+            raise ValueError('Invalid coefficient numerical value')
+        frac = Fraction(int(ratio[0]), int(ratio[1]))
+    else:
+        raise ValueError('Invalid coefficient numerical value')
+    return frac
 
 
-class Equation(NamedTuple):
-    reactants: List[Tuple[float, Molecule]]
-    products: List[Tuple[float, Molecule]]
+class Species:
+    def __init__(self, molecule: Molecule, coeff: Union[int, float, str, Fraction] = Fraction(1)):
+        num, denom = float(coeff).as_integer_ratio() if isinstance(coeff, float) else (0, 1)
+        self._coeff = coeff if isinstance(coeff, Fraction) \
+            else _parse_coeff(coeff) if isinstance(coeff, str) \
+            else Fraction(num, denom) if isinstance(coeff, float) \
+            else Fraction(coeff)
+        self._molecule = molecule
+        self._atoms = self._molecule.elements.copy()
+        for key in self._atoms.keys():
+            self._atoms[key] *= self._coeff
+
+    @property
+    def coeff(self):
+        return self._coeff
+
+    @property
+    def molecule(self):
+        return self._molecule
+
+    @property
+    def atoms(self):
+        return self._atoms
+
+    def as_dict(self):
+        return {self._molecule: self._coeff}
+
+    def __mul__(self, other):
+        return Species(self._molecule, self._coeff * other)
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __truediv__(self, other):
+        return Species(self._molecule, self._coeff / other)
+
+    def __rtruediv__(self, other):
+        return self.__truediv__(other)
 
     def __str__(self):
-        return " + ".join([(str(int(reactant[0])) if reactant[0] != 1 else '')
-                           + str(reactant[1]) for reactant in self.reactants]) + \
-               " = " + \
-               " + ".join([(str(int(product[0])) if product[0] != 1 else '')
-                           + str(product[1]) for product in self.products])
+        return (str(self._coeff) if self._coeff.denominator > 1
+                else str(int(self._coeff)) if self._coeff.numerator != 1
+                else '') + str(self._molecule)
 
-    def __add__(self, other: 'Equation'):
-        return balance(self.reactants + other.products, self.products + other.reactants)
+    def __repr__(self):
+        return self.__class__.__name__ + '(coeff=' + str(self._coeff) + ', molecule=' + repr(self._molecule) + ')'
 
-    def __sub__(self, other: 'Equation'):
-        pass
 
-    def __mul__(self, scalar):
-        pass
+class Equation:
+    def __init__(self, reactants: List[Species], products: List[Species]):
+        self._reactants = reactants
+        self._products = products
 
-    def __rmul__(self, scalar):
-        pass
+    @staticmethod
+    def from_str(eq: str):
+        toks: List[str] = tokenize(eq)
+        reactants: List[Species] = []
+        products: List[Species] = []
+
+        def get_next(it, window=1):
+            items, nexts = tee(it, 2)
+            nexts = islice(nexts, window, None)
+            return zip_longest(items, nexts)
+
+        def eval_species(start: int, end: int):
+            mol_start = start
+            while not toks[mol_start].isalpha() and mol_start < end:
+                mol_start += 1
+            if mol_start == end:
+                raise ValueError('Invalid equation')
+
+            coeff = ''.join(toks[start:mol_start])
+            mol_toks = toks[mol_start:end]
+            mol = Molecule.complete_formula(''.join(mol_toks))
+            return Species(mol, coeff=coeff)
+
+        ls = reactants
+        prev_plus_index = -1
+        for i, items in enumerate(get_next(toks)):
+            tok, ahead = items
+            try:
+                if tok == '=' or tok == '+' and (ahead.isnumeric() or ahead.isalpha()):
+                    ls += [eval_species(prev_plus_index + 1, i)]
+                    prev_plus_index = i
+                    if tok == '=':  # switch to products if '=' is encountered
+                        if ls is reactants:
+                            ls = products
+                        else:
+                            raise ValueError('Invalid equation')
+            except AttributeError:  # ahead == NoneType has no isnumeric or isalpha
+                break
+        ls += [eval_species(prev_plus_index + 1, len(toks))]
+
+        return Equation(reactants, products)
+
+    @staticmethod
+    def from_dict(reactants: Dict[Molecule, Fraction], products: Dict[Molecule, Fraction]):
+        rs = [Species(r, reactants[r]) for r in reactants]
+        ps = [Species(p, products[p]) for p in products]
+        return Equation(rs, ps)
+
+    def simplify(self):
+        species = self._reactants + self._products
+
+        # Turn all fractions into whole numbers
+        max_denom = max([sp.coeff.denominator for sp in species])
+        if max_denom > 1:
+            species = [sp * max_denom for sp in species]
+
+        # Reduce all coefficients to lowest terms
+        gcd = reduce(math.gcd, [sp.coeff.numerator for sp in species])
+        if gcd > 1:
+            species = [sp / gcd for sp in species]
+
+        # Reduce species found on both sides
+        reactants, products = Counter(), Counter()
+        for reactant in species[:len(self._reactants)]:
+            reactants.update(reactant.as_dict())
+        for product in species[len(self._reactants):]:
+            products.update(product.as_dict())
+        union = reactants & products
+        for mol in union:
+            reactants[mol] -= union[mol]
+            products[mol] -= union[mol]
+        reactants = {r: reactants[r] for r in reactants if reactants[r] > 0}
+        products = {p: products[p] for p in products if products[p] > 0}
+
+        return Equation.from_dict(reactants, products)
 
     def balance(self):
-        return balance(self.reactants, self.products)
+        simplified = self.simplify()
+        species = simplified._reactants + simplified._products
 
+        # Get the number of elements in each species and all elements present in Equation to produce the matrix's rows
+        elm_counters = [sp.molecule.elements for sp in species]
+        elements = {}
+        for counter in elm_counters:
+            elms = counter.keys()
+            elements |= elms
+        elements = dict.fromkeys(elements, Fraction())
 
-def reverse(reactants: List[Tuple[float, Molecule]], products: List[Tuple[float, Molecule]]):
-    return balance(products, reactants)
+        # Use sympy.Matrix to find null space of matrix whose values are to be used as balanced coefficients
+        mat_list = [list({**elements, **counter}.values()) for counter in elm_counters]
+        eye = Matrix.eye(len(mat_list))
+        mat_list = [row + eye.row(i).tolist()[0] for i, row in enumerate(mat_list)]
+        mat = Matrix(mat_list).rref()[0]
+        sols = [Fraction(abs(coeff.numerator()), coeff.denominator())
+                for coeff in mat.row(len(mat_list) - 1).tolist()[0] if abs(coeff) > 0]
 
+        species = [Species(sp.molecule, coeff=sol) for sp, sol in zip(species, sols)]
+        return Equation(species[:len(simplified._reactants)], species[len(simplified._reactants):])
 
-def simplify(reactants: List[Tuple[float, Molecule]], products: List[Tuple[float, Molecule]]):
-    pass
+    def __add__(self, other: 'Equation'):
+        if not isinstance(other, Equation):
+            raise TypeError("Expecting type 'Equation', got '" + str(type(other).__name__) + "' instead")
+        return Equation(self._reactants + other._reactants, self._products + other._products)
 
+    def __sub__(self, other: 'Equation'):
+        if not isinstance(other, Equation):
+            raise TypeError("Expecting type 'Equation', got '" + str(type(other).__name__) + "' instead")
+        return Equation(self._reactants + other._products, self._products + other._reactants)
 
-def balance(reactants: List[Tuple[float, Molecule]], products: List[Tuple[float, Molecule]]):
-    species = reactants + products
-    elements = list(set([e for elements in [[*sp[1].elements] for sp in species] for e in elements]))
-    cols = [[sp[0] * sp[1].elements[elements[i]] for i in range(len(elements))] for sp in species]
+    def __mul__(self, other: Union[int, float, str, Fraction]):
+        if not isinstance(other, (int, float, str, Fraction)):
+            raise TypeError("Expecting type 'int', 'float', 'str', or 'Fraction', got '" +
+                            str(type(other).__name__) + "' instead")
 
-    m = Matrix(cols)
-    if m.rows == m.cols:
-        raise TypeError('The equation is an impossible reaction')
+        num, denom = float(other).as_integer_ratio() if isinstance(other, float) else (0, 1)
+        scalar = other if isinstance(other, Fraction) \
+            else _parse_coeff(other) if isinstance(other, str) \
+            else Fraction(num, denom) if isinstance(other, float) \
+            else Fraction(other)
 
-    identity = eye(m.rows)
-    for i in range(identity.cols):
-        m = m.col_insert(m.cols + i, identity.col(i))
+        reactants = [scalar * r for r in self._reactants]
+        products = [scalar * p for p in self._products]
+        return Equation(reactants, products)
 
-    # Tuple returned from Matrix.rref()
-    m = m.rref()[0]
+    def __rmul__(self, other: Union[int, float, str, Fraction]):
+        return self.__mul__(other)
 
-    coeffs = [abs(Rational(n)) for n in list(m.row(m.rows - 1)) if n]
-    denoms = [sol.q for sol in coeffs]
-    max_den = max(denoms)
-    coeffs = [float(sol * max_den) for sol in coeffs]
+    def __truediv__(self, other: Union[int, float, str, Fraction]):
+        if not isinstance(other, (int, float, str, Fraction)):
+            raise TypeError("Expecting type 'int', 'float', 'str', or 'Fraction', got '" +
+                            str(type(other).__name__) + "' instead")
 
-    # TODO: molecules on both sides of equation should cancel
+        num, denom = float(other).as_integer_ratio() if isinstance(other, float) else (0, 1)
+        scalar = other if isinstance(other, Fraction) \
+            else _parse_coeff(other) if isinstance(other, str) \
+            else Fraction(num, denom) if isinstance(other, float) \
+            else Fraction(other)
 
-    reactants = [(coeff, reactant[1]) for coeff, reactant in zip(coeffs[:len(reactants)], reactants)]
-    products = [(coeff, product[1]) for coeff, product in zip(coeffs[len(reactants):], products)]
+        reactants = [scalar / r for r in self._reactants]
+        products = [scalar / p for p in self._products]
+        return Equation(reactants, products)
 
-    return Equation(reactants, products)
+    def __rtruediv__(self, other: Union[int, float]):
+        return self.__truediv__(other)
+    
+    def __neg__(self):
+        return Equation(self._products, self._reactants)
+    
+    def __pos__(self):
+        return Equation(self._reactants, self._products)
+    
+    @property
+    def reactants(self):
+        return self._reactants
 
+    @property
+    def products(self):
+        return self._products
 
-def parse_expression(exp: str):
-    exp = "".join(exp.split())
-    species_seps = [match.end() for match in re.finditer(phases_p, exp)]
-    entities = [exp[0:species_seps[0]]]
-
-    for behind, sep in zip(species_seps[0:len(species_seps) - 1], species_seps[1:]):
-        entities.append(exp[behind + 1:sep])
-
-    species = []
-
-    for entity in entities:
-        coeff_end = 0
-        while entity[coeff_end].isnumeric():
-            coeff_end += 1
-        coeff = entity[:coeff_end]
-        coeff = 1.0 if not coeff_end else float(coeff)
-        mol = molecule(entity[coeff_end:])
-        species.append((coeff, mol))
-
-    return species
-
-
-def equation(eq: str):
-    eq_exps = eq.split('=')
-    if len(eq_exps) != 2:
-        raise ValueError('Invalid chemical equation')
-
-    reactants_exp = eq_exps[0]
-    products_exp = eq_exps[1]
-
-    reactants = parse_expression(reactants_exp)
-    products = parse_expression(products_exp)
-
-    return Equation(reactants, products)
-
-
-
+    def __str__(self):
+        return ' + '.join([str(species) for species in self._reactants]) + \
+               ' = ' + \
+               ' + '.join([str(species) for species in self._products])

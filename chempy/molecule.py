@@ -98,7 +98,7 @@ class Molecule:
 
     @property
     def elements(self):
-        return self._elements
+        return self._elements.copy()
 
     @property
     def charge(self):

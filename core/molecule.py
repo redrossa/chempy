@@ -1,4 +1,4 @@
-import collections
+from collections import Counter
 from typing import Union, List
 
 from core.util import tokenize
@@ -53,7 +53,7 @@ def _parse(toks: List[str]):
 class Molecule:
     def __init__(self, formula_toks: List[str], charge: Union[str, int] = 0, states: List = None):
         self._formula = ''.join(formula_toks)
-        self._elements = collections.Counter(_parse(formula_toks))
+        self._elements = Counter(_parse(formula_toks))
         self._charge = int(charge)
         self._states = states if states else []
         self._charge_sign = '+' if self._charge >= 0 else '-'
@@ -82,7 +82,7 @@ class Molecule:
         else:
             charge = 0
             try:
-                states_start = toks.index('[')
+                states_start = toks.index('(')
             except ValueError:
                 states_start = 0  # states cannot be first character
 
@@ -116,11 +116,24 @@ class Molecule:
     def charge_mag(self):
         return self._charge_mag
 
+    def __hash__(self):
+        return hash((self._formula, self._charge, *self._states))
+
+    def __eq__(self, other: 'Molecule'):
+        return isinstance(other, Molecule) \
+               and self._formula == other._formula \
+               and self._charge == other._charge \
+               and self._states == other._states
+
     def __str__(self):
         return self._formula + \
                (self._charge_sign + (str(self._charge_mag) if self._charge_mag != 1 else '')
                 if self._charge_mag != 0 else '') + \
-               ('[' + ', '.join(state for state in self._states) + ']' if self._states else '')
+               ('(' + ', '.join(state for state in self._states) + ')' if self._states else '')
 
     def __repr__(self):
-        return '(' + self._formula + ',' + self._charge_sign + str(self._charge_mag) + ',' + str(self._states) + ')'
+        return self.__class__.__name__ + '(' \
+               'formula=' + self._formula + ', ' \
+               'charge='+ self._charge_sign + str(self._charge_mag) + ', ' + \
+               'states=' + str(self._states) + \
+               ')'

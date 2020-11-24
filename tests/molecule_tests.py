@@ -29,7 +29,7 @@ def molecule_as_str(formula, charge, states):
     return tmp
 
 
-class MoleculeTests(unittest.TestCase):
+class MoleculeParseTests(unittest.TestCase):
     def test_parse(self):
         cases = [
             (molecule._parse(util.tokenize(case_inputs[0][0])), ['e']),
@@ -47,6 +47,8 @@ class MoleculeTests(unittest.TestCase):
         for actual, expected in cases:
             self.assertEqual(expected, actual)
 
+
+class MoleculeTests(unittest.TestCase):
     def test_Molecule_init(self):
         cases = [(Molecule(util.tokenize(formula), adjust_charge(charge), states),
                   formula,
